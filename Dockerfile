@@ -13,6 +13,15 @@ WORKDIR /app
 COPY . .
 RUN go build -mod=vendor -o bin/hello
 
+# Test
+FROM circleci:android
+# Install any required dependencies.
+RUN apk --no-cache add ca-certificates
+WORKDIR /root/
+# Copy the binary from the builder stage and set it as the default command.
+COPY --from=builder /app/bin/hello /usr/local/bin/
+CMD ["ls"]
+
 # -- Stage 2 -- #
 # Create the final environment with the compiled binary.
 FROM alpine
