@@ -1,33 +1,86 @@
-# This is a standard Dockerfile for building a Go app.
-# It is a multi-stage build: the first stage compiles the Go source into a binary, and
-#   the second stage copies only the binary into an alpine base.
+# vim:set ft=dockerfile:
 
-# -- Stage 1 -- #
-# Compile the app.
-FROM golang:1.12-alpine as builder
-WORKDIR /app
-# The build context is set to the directory where the repo is cloned.
-# This will copy all files in the repo to /app inside the container.
-# If your app requires the build context to be set to a subdirectory inside the repo, you
-#   can use the source_dir app spec option, see: https://www.digitalocean.com/docs/app-platform/references/app-specification-reference/
-COPY . .
-RUN go build -mod=vendor -o bin/hello
+# By policy, the base image tag should be a quarterly tag unless there's a 
+# specific reason to use a different one. This means January, April, July, or 
+# October.
+FROM cimg/android:2022.09
 
-# Test
-FROM circleci:android
-# Install any required dependencies.
-RUN apk --no-cache add ca-certificates
-WORKDIR /root/
-# Copy the binary from the builder stage and set it as the default command.
-COPY --from=builder /app/bin/hello /usr/local/bin/
-CMD ["ls"]
+LABEL maintainer="Community & Partner Engineering Team <community-partner@circleci.com>"
 
-# -- Stage 2 -- #
-# Create the final environment with the compiled binary.
-FROM alpine
-# Install any required dependencies.
-RUN apk --no-cache add ca-certificates
-WORKDIR /root/
-# Copy the binary from the builder stage and set it as the default command.
-COPY --from=builder /app/bin/hello /usr/local/bin/
-CMD ["hello"]
+# Java 11 is default
+RUN sudo apt-get update && sudo apt-get install -y \
+		ant \
+		openjdk-8-jdk \
+		openjdk-11-jdk \
+		ruby-full \
+	&& \
+	sudo rm -rf /var/lib/apt/lists/* && \
+	ruby -v && \
+	sudo gem install bundler && \
+	bundle version
+
+ENV M2_HOME /usr/local/apache-maven
+ENV MAVEN_OPTS -Xmx2048m
+ENV PATH $M2_HOME/bin:$PATH
+# Set JAVA_HOME (and related) environment variable. This will be set to our
+# default Java version of 11 but the user would need to reset it when changing
+# JAVA versions.
+ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+ENV JDK_HOME=${JAVA_HOME}
+ENV JRE_HOME=${JDK_HOME}
+ENV MAVEN_VERSION "3.8.6"
+RUN curl -sSL -o /tmp/maven.tar.gz http://apache.osuosl.org/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz && \
+	sudo tar -xz -C /usr/local -f /tmp/maven.tar.gz && \
+	sudo ln -sf /usr/local/apache-maven-${MAVEN_VERSION} /usr/local/apache-maven && \
+	rm -rf /tmp/maven.tar.gz && \
+	mkdir -p /home/circleci/.m2
+
+ENV GRADLE_VERSION "7.5.1"
+ENV PATH $PATH:/usr/local/gradle-${GRADLE_VERSION}/bin
+RUN URL=https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip && \
+	curl -sSL -o /tmp/gradle.zip $URL && \
+	sudo unzip -d /usr/local /tmp/gradle.zip && \
+	rm -rf /tmp/gradle.zip
+
+# Install Android SDK Tools
+ENV ANDROID_HOME "/home/circleci/android-sdk"
+ENV ANDROID_SDK_ROOT $ANDROID_HOME
+ENV CMDLINE_TOOLS_ROOT "${ANDROID_HOME}/cmdline-tools/latest/bin"
+ENV ADB_INSTALL_TIMEOUT 120
+ENV PATH "${ANDROID_HOME}/emulator:${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/tools:${ANDROID_HOME}/tools/bin:${ANDROID_HOME}/platform-tools:${ANDROID_HOME}/platform-tools/bin:${PATH}"
+# You can find the latest command line tools here: https://developer.android.com/studio#command-tools
+RUN SDK_TOOLS_URL="https://dl.google.com/android/repository/commandlinetools-linux-8512546_latest.zip" && \
+	mkdir -p ${ANDROID_HOME}/cmdline-tools && \
+	mkdir ${ANDROID_HOME}/platforms && \
+	mkdir ${ANDROID_HOME}/ndk && \
+	wget -O /tmp/cmdline-tools.zip -t 5 "${SDK_TOOLS_URL}" && \
+	unzip -q /tmp/cmdline-tools.zip -d ${ANDROID_HOME}/cmdline-tools && \
+	rm /tmp/cmdline-tools.zip && \
+	mv ${ANDROID_HOME}/cmdline-tools/cmdline-tools ${ANDROID_HOME}/cmdline-tools/latest
+
+RUN echo y | ${CMDLINE_TOOLS_ROOT}/sdkmanager "tools" && \
+	echo y | ${CMDLINE_TOOLS_ROOT}/sdkmanager "platform-tools" && \
+	echo y | ${CMDLINE_TOOLS_ROOT}/sdkmanager "build-tools;33.0.0"         
+
+RUN echo y | ${CMDLINE_TOOLS_ROOT}/sdkmanager "platforms;android-33" && \
+	echo y | ${CMDLINE_TOOLS_ROOT}/sdkmanager "platforms;android-32" && \
+	echo y | ${CMDLINE_TOOLS_ROOT}/sdkmanager "platforms;android-31" && \
+	echo y | ${CMDLINE_TOOLS_ROOT}/sdkmanager "platforms;android-30" && \
+	echo y | ${CMDLINE_TOOLS_ROOT}/sdkmanager "platforms;android-29" && \
+	echo y | ${CMDLINE_TOOLS_ROOT}/sdkmanager "platforms;android-28" && \
+	echo y | ${CMDLINE_TOOLS_ROOT}/sdkmanager "platforms;android-27"
+
+# Install some useful packages
+RUN echo y | ${CMDLINE_TOOLS_ROOT}/sdkmanager "extras;android;m2repository" && \
+	echo y | ${CMDLINE_TOOLS_ROOT}/sdkmanager "extras;google;m2repository" && \
+	echo y | ${CMDLINE_TOOLS_ROOT}/sdkmanager "extras;google;google_play_services" && \
+	sudo gem install fastlane --version 2.208.0 --no-document
+
+# Install Google Cloud CLI
+# Latest gcloud version can be found here: https://cloud.google.com/sdk/docs/release-notes
+ENV GCLOUD_VERSION "404.0.0-0"
+RUN curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add - && \
+	sudo add-apt-repository "deb https://packages.cloud.google.com/apt cloud-sdk main" && \
+	sudo apt-get update && sudo apt-get install -y google-cloud-sdk=${GCLOUD_VERSION} && \
+	sudo gcloud config set --installation component_manager/disable_update_check true && \
+	sudo gcloud config set disable_usage_reporting false
