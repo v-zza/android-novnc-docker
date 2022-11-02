@@ -6,7 +6,7 @@ logd="/var/opt/simplex/"
 if [ ! -f "$confd/smp-server.ini" ]; then
 	# If not, determine ip or domain
 	case $addr in
-		'') smp-server init -l --ip `wget -q -O - ifconfig.me` ;;
+		'') smp-server init -l --ip `curl ifconfig.me` ;;
 		*[a-zA-Z]*) smp-server init -l -n "$addr" ;;
 		*) smp-server init -l --ip "$addr" ;;
 	esac
